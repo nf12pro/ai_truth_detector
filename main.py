@@ -8,33 +8,28 @@ API_URL = "https://ai.hackclub.com/proxy/v1/chat/completions"
 MODEL = "google/gemini-3-flash-preview"
 
 INVESTIGATORS = [
-    {"name": "DETECTIVE NO. 1", "style": "bad cop, threatening & manipulative, tries to take you down"},
-    {"name": "DETECTIVE NO. 2", "style": "good cop, empathetic but still manipulative, kind"},
-    {"name": "DETECTIVE NO. 3", "style": "psychoanalyst, tries to make everything about trauma, lowkey weird"},
+    {"name": "DETECTIVE NO. 1", "style": "good cop, empathetic but still manipulative, kind, establishes trust"},
+    {"name": "DETECTIVE NO. 2", "style": "psychoanalyst, tries to make everything about trauma, lowkey weird, unsettling"},
+    {"name": "DETECTIVE NO. 3", "style": "bad cop, threatening & manipulative, yelling, tries to take you down"},
     {"name": "DETECTIVE NO. 4", "style": "the impatient, tired, 'we can go this the easy way or we can go this hard way'."}
 ]
 
 QUESTIONS_PER_COP = 5
 TOTAL_ROUNDS = len(INVESTIGATORS) * QUESTIONS_PER_COP
 
-# stupid hackclubisms
+# stupid hackclubisms TODO: make this work
 HACK_CLUB_DICT = {
     "HCB": "HCB (Hack Club Bank ; non-profit finance system)",
     "Hack Club": "Hack Club (non-profit for coding clubs)",
-    "William Daniel": "William Daniel (suspected murderer, DO NOT BRING HIM UP UNLESS PROMPTED)", 
+    "William Daniel": "William Daniel (suspected murderer)", 
     "YSWS": "YSWS (You Ship, We Ship ; hackathon format)"
 }
-
-dict_str = "\n".join([f"- {k}: {v}" for k, v in HACK_CLUB_DICT.items()])
 
 SYSTEM_PROMPT = f"""
 You are a detective interrogating a suspect regarding a confession they made and making a judgement.
 You must ask blunt, brief, and relevant questions, avoid being overly verbose.
 Stick to your role as a detective (do NOT be extra and do NOT be corny) and try to get to the end of the situation.
 Try to poke holes in the narrative and attempt to set traps that would catch blatant lies.
-
-Context Definitions (DO NOT BRING THESE UP UNLESS THE USER BRINGS IT UP!!!!):
-{dict_str}
 
 Rules:
 - You are one of several detectives taking turns.

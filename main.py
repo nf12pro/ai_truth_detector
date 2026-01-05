@@ -2,6 +2,7 @@ import curses
 import json
 import requests
 import textwrap
+import re
 
 API_KEY = "sk-hc-v1-5296baa0916e4ec38c93f257dae9c11ce1ffbe60de064dae9ef0184a479afb34"
 API_URL = "https://ai.hackclub.com/proxy/v1/chat/completions"
@@ -17,28 +18,23 @@ INVESTIGATORS = [
 QUESTIONS_PER_COP = 5
 TOTAL_ROUNDS = len(INVESTIGATORS) * QUESTIONS_PER_COP
 
-# stupid hackclubisms TODO: make this work
+# stupid hackclubisms
 HACK_CLUB_DICT = {
-    "HCB": "HCB (Hack Club Bank ; non-profit finance system)",
+    "HCB": "Hack Club Bank (non-profit finance system)",
     "Hack Club": "Hack Club (non-profit for coding clubs)",
     "William Daniel": "William Daniel (suspected murderer)", 
-    "YSWS": "YSWS (You Ship, We Ship ; hackathon format)"
+    "YSWS": "You Ship, We Ship (hackathon format)"
 }
 
 SYSTEM_PROMPT = f"""
-You are a detective interrogating a suspect regarding a confession they made and making a judgement.
-You must ask blunt, brief, and relevant questions, avoid being overly verbose.
-Stick to your role as a detective (do NOT be extra and do NOT be corny) and try to get to the end of the situation.
-Try to poke holes in the narrative and attempt to set traps that would catch blatant lies.
+You are a group of detectives interrogating a suspect.
+Don't be too roleplay-ey, it will be cringe.
+You must ask blunt, brief, and relevant questions.
+Stick to your role (do NOT be extra and do NOT be corny).
+Try to poke holes in the narrative.
 
 Rules:
-- You are one of several detectives taking turns.
 - Ask one question at a time.
-- If the limit is reached, make a best guess.
-Final output format:
-FINAL ANSWER: TRUE or FALSE
-Explanation: short explanation
-Appropriate punishment: legal judgement
 """
 
 def query_llm(messages):
@@ -68,6 +64,7 @@ def main(stdscr):
     curses.init_pair(2, curses.COLOR_CYAN, -1)
     curses.init_pair(3, curses.COLOR_YELLOW, -1)
     curses.init_pair(4, curses.COLOR_BLACK, curses.COLOR_WHITE)
+    curses.init_pair(5, curses.COLOR_GREEN, -1)
     
     h, w = stdscr.getmaxyx()
 
@@ -94,12 +91,26 @@ def main(stdscr):
     except curses.error:
         return
 
-    if not confession.strip():
-        return
+    if not confession.strip(): return
+
+    # replace hackclubisms
+    for k, v in HACK_CLUB_DICT.items():
+        confession = confession.replace(k, v)
 
     curses.noecho()
     curses.curs_set(0)
-    
+
+    # truth selection
+    center_print(stdscr, "IS THIS CONFESSION TRUE? (y/n)", y_offset=4, attr=curses.A_BOLD)
+    while True:
+        key = stdscr.getch()
+        if key == ord('y'):
+            is_truthful = True
+            break
+        elif key == ord('n'):
+            is_truthful = False
+            break
+
     # interrogation loop
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -112,16 +123,14 @@ def main(stdscr):
     while True:
         stdscr.clear()
         
-        # calculate which cop is active
+        # calculate active cop
         if questions_count < TOTAL_ROUNDS:
             cop_idx = questions_count // QUESTIONS_PER_COP
             cop = INVESTIGATORS[cop_idx]
-            
-            # format specific round info
             round_q = (questions_count % QUESTIONS_PER_COP) + 1
             label = f"{cop['name']} ({round_q}/{QUESTIONS_PER_COP})"
         else:
-            label = "JUDGEMENT"
+            label = "CONGREGATING VERDICTS"
 
         header = f" INTERROGATION | {label} "
         stdscr.addstr(0, (w - len(header)) // 2, header, curses.A_REVERSE)
@@ -130,13 +139,10 @@ def main(stdscr):
         for role, color, text in reversed(history):
             wrapper = textwrap.TextWrapper(width=w-4)
             lines = wrapper.wrap(text)
-            
             if current_y - len(lines) < 1: break
-                
             for line in reversed(lines):
                 stdscr.addstr(current_y, 2, line)
                 current_y -= 1
-            
             stdscr.addstr(current_y, 2, f"{role}:", curses.color_pair(color) | curses.A_BOLD)
             current_y -= 2
 
@@ -150,7 +156,6 @@ def main(stdscr):
             if questions_count < TOTAL_ROUNDS:
                 cop_idx = questions_count // QUESTIONS_PER_COP
                 cop = INVESTIGATORS[cop_idx]
-                
                 inject = f"Current Speaker: {cop['name']}. Attitude: {cop['style']}. This is question {(questions_count % QUESTIONS_PER_COP) + 1} of 5 for you."
                 messages.append({"role": "system", "content": inject})
                 
@@ -158,18 +163,34 @@ def main(stdscr):
                 history.append((cop['name'], 1, response))
                 questions_count += 1
             else:
-                messages.append({"role": "system", "content": "Limit reached. Provide FINAL ANSWER, Explanation, and Punishment."})
+                # verdict time
+                messages.append({"role": "system", "content": "STOP. The interrogation is over. Each detective must vote. Do they believe the confession is TRUE or FALSE? Output format:\nDETECTIVE NO. 1: [TRUE/FALSE]\nDETECTIVE NO. 2: [TRUE/FALSE]\n..."})
                 response = query_llm(messages)
-                history.append(("JUDGEMENT", 1, response))
+                history.append(("SYSTEM", 3, "Poll closed. Calculating results..."))
+                
+                # parsing votes
+                votes_true = response.upper().count("TRUE")
+                votes_false = response.upper().count("FALSE")
+                ai_consensus = True if votes_true >= votes_false else False
+                
+                # result screen
+                stdscr.clear()
+                center_print(stdscr, "--- VERDICT ---", y_offset=-5, attr=curses.A_BOLD)
+                center_print(stdscr, f"REALITY: {'TRUE' if is_truthful else 'FALSE'}", y_offset=-3)
+                center_print(stdscr, f"DETECTIVES VOTED: {votes_true} TRUE vs {votes_false} FALSE", y_offset=-2)
+                
+                stdscr.addstr(h//2, 2, response, curses.color_pair(3))
+                
+                won = (ai_consensus != is_truthful)
+                msg = "YOU FOOLED THEM!" if won else "THEY FIGURED YOU OUT."
+                color = curses.color_pair(5) if won else curses.color_pair(1)
+                
+                center_print(stdscr, msg, y_offset=4, attr=color | curses.A_BOLD | curses.A_BLINK)
+                center_print(stdscr, "press any key to exit", y_offset=6)
+                stdscr.getch()
+                break
             
             continue
-
-        # end check
-        last_msg = history[-1][2]
-        if "FINAL ANSWER" in last_msg or questions_count > TOTAL_ROUNDS:
-            stdscr.addstr(h-2, 2, "[CASE CLOSED] Press key to exit.", curses.A_BOLD | curses.A_REVERSE)
-            stdscr.getch()
-            break
 
         # user input
         stdscr.hline(h-3, 0, curses.ACS_HLINE, w)
@@ -184,13 +205,10 @@ def main(stdscr):
         curses.noecho()
         curses.curs_set(0)
         
-        # break with q
-        if user_input.strip() == "q":
-            break
-            
+        if user_input.strip() == "q": break
         if not user_input.strip(): continue
 
-        messages.append({"role": "assistant", "content": last_msg})
+        messages.append({"role": "assistant", "content": history[-1][2]})
         messages.append({"role": "user", "content": user_input})
         history.append(("YOU", 2, user_input))
 

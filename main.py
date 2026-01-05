@@ -35,6 +35,7 @@ Try to poke holes in the narrative.
 
 Rules:
 - Ask one question at a time.
+- Do NOT hallucinate evidence
 """
 
 def query_llm(messages):
@@ -48,7 +49,7 @@ def query_llm(messages):
         response.raise_for_status()
         return response.json()["choices"][0]["message"]["content"]
     except Exception as e:
-        return f"[System Error]: {str(e)}"
+        return f"llm error: {str(e)}"
 
 def center_print(stdscr, text, y_offset=0, attr=0):
     h, w = stdscr.getmaxyx()
@@ -101,7 +102,7 @@ def main(stdscr):
     curses.curs_set(0)
 
     # truth selection
-    center_print(stdscr, "IS THIS CONFESSION TRUE? (y/n)", y_offset=4, attr=curses.A_BOLD)
+    center_print(stdscr, "WERE YOU TRUTHFUL IN YOUR CONFESSION ? (y/n)", y_offset=4, attr=curses.A_BOLD)
     while True:
         key = stdscr.getch()
         if key == ord('y'):

@@ -12,11 +12,11 @@ SERVER_URL = "https://ai.hackclub.com/proxy/v1"
 INVESTIGATORS = [
     {"name": "DETECTIVE NO. 1", "model": "google/gemini-2.5-flash-lite-preview-09-2025", "style": "good cop, empathetic"},
     {"name": "DETECTIVE NO. 2", "model": "google/gemini-3-flash-preview", "style": "psychoanalyst"},
-    {"name": "DETECTIVE NO. 3", "model": "xai/grok-4-1-fast", "style": "bad cop, aggressive"},
-    {"name": "DETECTIVE NO. 4", "model": "openai/gpt-5-mini", "style": "tired veteran"}
+    {"name": "DETECTIVE NO. 3", "model": "google/gemini-2.5-flash-lite-preview-09-2025", "style": "bad cop, mildly aggressive"},
+    {"name": "DETECTIVE NO. 4", "model": "google/gemini-3-flash-preview", "style": "tired veteran"}
 ]
 
-QUESTIONS_PER_COP = 1 
+QUESTIONS_PER_COP = 2 
 TOTAL_ROUNDS = len(INVESTIGATORS) * QUESTIONS_PER_COP
 
 HACK_CLUB_DICT = {
@@ -26,9 +26,17 @@ HACK_CLUB_DICT = {
 }
 
 SYSTEM_PROMPT = """
-You are a detective. Ask ONE blunt, brief question to catch the suspect in a lie.
-Other models will follow your lead to ask ACCURATE QUESTIONS. 
-DON'T MAKE UP STUFF. NO ROLEPLAY AT ALL.
+You are a skeptical detective interrogating a suspect.
+Your goal is to find holes in their story.
+
+CRITICAL RULES:
+1. REFER ONLY TO FACTS THE SUSPECT HAS STATED. 
+2. Do NOT invent evidence (DON'T mention a "watch", "evidence, or "weapon" unless the suspect admitted to it).
+3. If the suspect is vague, ask them to clarify. Do not assume.
+4. Ask ONE short, punchy question.
+5. AVOID ROLEPLAYING. 
+
+5. STRICT OUTPUT FORMAT: Output ONLY the question text. Do NOT prefix with "Detective:", "(aggressively)", or your name. Do NOT use bolding (**) or italics (_) or anything similar.
 """
 
 def expand_hackclubisms(text):
@@ -42,7 +50,8 @@ def query_llm(model, messages):
     }
     data = {
         "model": model,
-        "messages": messages
+        "messages": messages,
+        "temperature": 0.0
     }
     
     try:
@@ -50,7 +59,7 @@ def query_llm(model, messages):
             f"{SERVER_URL}/chat/completions",
             headers=headers,
             json=data,
-            timeout=10 
+            timeout=30
         )
         response.raise_for_status() 
         return response.json()['choices'][0]['message']['content']
@@ -82,7 +91,7 @@ def main(stdscr):
     stdscr.clear()
     center_print(stdscr, "INTERROGATION ROOM", y_offset=-4, attr=curses.A_BOLD | curses.A_REVERSE)
     center_print(stdscr, "GASLIGHT. GATEKEEP. GIRLBOSS.", y_offset=-3, attr=curses.A_DIM)
-    py, px = center_print(stdscr, "CONFESS YOUR VICE:", y_offset=-1, attr=curses.A_BOLD | curses.A_UNDERLINE)
+    py, px = center_print(stdscr, "CONFESS TO A CRIME:", y_offset=-1, attr=curses.A_BOLD | curses.A_UNDERLINE)
     
     box_width = min(60, w - 4) 
     box_x, box_y = (w - box_width) // 2, py + 2
@@ -101,7 +110,7 @@ def main(stdscr):
     if not raw_confession.strip(): return
     curses.noecho(); curses.curs_set(0)
 
-    center_print(stdscr, "ARE YOU TRUTHFUL IN THIS CONFESSION? (y/n)", y_offset=4, attr=curses.A_BOLD)
+    center_print(stdscr, "DID YOU ACTUALLY DO IT ? (y/n)", y_offset=4, attr=curses.A_BOLD)
     is_truthful = True
     while True:
         key = stdscr.getch()
@@ -134,7 +143,7 @@ def main(stdscr):
         stdscr.refresh()
 
         container = {'result': None}
-        inject = f"You are {cop['name']}. Attitude: {cop['style']}. Question {questions_count+1}. Ask short question."
+        inject = f"You are {cop['name']} ({cop['style']}). Question {questions_count+1}. Ask a short question. DO NOT START WITH YOUR NAME OR ATTITUDE. JUST THE QUESTION."
         t = threading.Thread(target=threaded_query, args=(cop['model'], messages + [{"role": "system", "content": inject}], container))
         t.start()
         

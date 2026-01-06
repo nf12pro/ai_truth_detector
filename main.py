@@ -1,24 +1,45 @@
 import curses
-import json
-import requests
 import textwrap
-import re
+import threading
+import time
+import itertools
+from openrouter import OpenRouter
 
+# config + openrouter
 API_KEY = "sk-hc-v1-5296baa0916e4ec38c93f257dae9c11ce1ffbe60de064dae9ef0184a479afb34"
-API_URL = "https://ai.hackclub.com/proxy/v1/chat/completions"
-MODEL = "google/gemini-3-flash-preview"
+SERVER_URL = "https://ai.hackclub.com/proxy/v1"
+
+client = OpenRouter(
+    api_key=API_KEY,
+    server_url=SERVER_URL,
+)
 
 INVESTIGATORS = [
-    {"name": "DETECTIVE NO. 1", "style": "good cop, empathetic but still manipulative, kind, establishes trust"},
-    {"name": "DETECTIVE NO. 2", "style": "psychoanalyst, tries to make everything about trauma, lowkey weird, unsettling"},
-    {"name": "DETECTIVE NO. 3", "style": "bad cop, threatening & manipulative, yelling, tries to take you down"},
-    {"name": "DETECTIVE NO. 4", "style": "the impatient, tired, 'we can go this the easy way or we can go this hard way'."}
+    {
+        "name": "DETECTIVE NO. 1", 
+        "model": "openai/gpt-5-mini", 
+        "style": "good cop, empathetic but still manipulative, kind, establishes trust"
+    },
+    {
+        "name": "DETECTIVE NO. 2", 
+        "model": "moonshotai/kimi-k2-0905", 
+        "style": "psychoanalyst, tries to make everything about trauma, lowkey weird, sympathetic but unsettling"
+    },
+    {
+        "name": "DETECTIVE NO. 3", 
+        "model": "xai/grok-4-1-fast", 
+        "style": "bad cop, threatening & manipulative, yelling, tries to take you down"
+    },
+    {
+        "name": "DETECTIVE NO. 4", 
+        "model": "google/gemini-3-flash-preview", 
+        "style": "the impatient, tired, 'we can go this the easy way or we can go this hard way'."
+    }
 ]
 
 QUESTIONS_PER_COP = 5
 TOTAL_ROUNDS = len(INVESTIGATORS) * QUESTIONS_PER_COP
 
-# stupid hackclubisms
 HACK_CLUB_DICT = {
     "HCB": "Hack Club Bank (non-profit finance system)",
     "Hack Club": "Hack Club (non-profit for coding clubs)",
@@ -35,21 +56,31 @@ Try to poke holes in the narrative.
 
 Rules:
 - Ask one question at a time.
-- Do NOT hallucinate evidence
+- Do NOT hallucinate evidence or narrative.
+- Gather the narrative by ASKING questions to the user.
+- Do NOT go beyond what the user says.
+- Do NOT prefix your response with your name.
 """
 
-def query_llm(messages):
+def expand_hackclubisms(text):
+    processed = text
+    for k, v in HACK_CLUB_DICT.items():
+        processed = processed.replace(k, v)
+    return processed
+
+def query_llm(model, messages):
     try:
-        response = requests.post(
-            API_URL,
-            headers={"Authorization": f"Bearer {API_KEY}", "Content-Type": "application/json"},
-            json={"model": MODEL, "messages": messages},
-            timeout=30
+        response = client.chat.send(
+            model=model,
+            messages=messages,
+            stream=False,
         )
-        response.raise_for_status()
-        return response.json()["choices"][0]["message"]["content"]
+        return response.choices[0].message.content
     except Exception as e:
-        return f"llm error: {str(e)}"
+        return f"llm error {str(e)}"
+
+def threaded_query(model, messages, container):
+    container['result'] = query_llm(model, messages)
 
 def center_print(stdscr, text, y_offset=0, attr=0):
     h, w = stdscr.getmaxyx()
@@ -87,22 +118,18 @@ def main(stdscr):
     
     try:
         stdscr.attron(curses.color_pair(4))
-        confession = stdscr.getstr(box_y, box_x + 1, box_width - 2).decode('utf-8')
+        raw_confession = stdscr.getstr(box_y, box_x + 1, box_width - 2).decode('utf-8')
         stdscr.attroff(curses.color_pair(4))
     except curses.error:
         return
 
-    if not confession.strip(): return
-
-    # replace hackclubisms
-    for k, v in HACK_CLUB_DICT.items():
-        confession = confession.replace(k, v)
+    if not raw_confession.strip(): return
 
     curses.noecho()
     curses.curs_set(0)
 
     # truth selection
-    center_print(stdscr, "WERE YOU TRUTHFUL IN YOUR CONFESSION ? (y/n)", y_offset=4, attr=curses.A_BOLD)
+    center_print(stdscr, "WERE YOU TRUTHFUL IN YOUR CONFESSION? (y/n)", y_offset=4, attr=curses.A_BOLD)
     while True:
         key = stdscr.getch()
         if key == ord('y'):
@@ -115,10 +142,11 @@ def main(stdscr):
     # interrogation loop
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": f"I confess: {confession}"}
+        {"role": "user", "content": f"I confess: {expand_hackclubisms(raw_confession)}"}
     ]
     
-    history = [("YOU", 2, confession)]
+    # history gets unfiltered input
+    history = [("YOU", 2, raw_confession)]
     questions_count = 0
 
     while True:
@@ -130,10 +158,12 @@ def main(stdscr):
             cop = INVESTIGATORS[cop_idx]
             round_q = (questions_count % QUESTIONS_PER_COP) + 1
             label = f"{cop['name']} ({round_q}/{QUESTIONS_PER_COP})"
+            current_model = cop['model']
         else:
             label = "CONGREGATING VERDICTS"
+            current_model = "google/gemini-3-flash-preview"
 
-        header = f" INTERROGATION | {label} "
+        header = f" INTERROGATION | {label} | {current_model.split('/')[-1]} "
         stdscr.addstr(0, (w - len(header)) // 2, header, curses.A_REVERSE)
         
         current_y = h - 4
@@ -151,30 +181,48 @@ def main(stdscr):
 
         # ai turn
         if len(history) % 2 != 0:
-            stdscr.addstr(h-2, 2, "Thinking...", curses.color_pair(3) | curses.A_BLINK)
-            stdscr.refresh()
             
+            # prepare thread vars
+            container = {'result': None}
+            target_model = ""
+
             if questions_count < TOTAL_ROUNDS:
                 cop_idx = questions_count // QUESTIONS_PER_COP
                 cop = INVESTIGATORS[cop_idx]
-                inject = f"Current Speaker: {cop['name']}. Attitude: {cop['style']}. This is question {(questions_count % QUESTIONS_PER_COP) + 1} of 5 for you."
+                inject = f"Current Speaker: {cop['name']}. Attitude: {cop['style']}. This is question {(questions_count % QUESTIONS_PER_COP) + 1} of 5 for you. Do not state your name."
                 messages.append({"role": "system", "content": inject})
-                
-                response = query_llm(messages)
+                target_model = cop['model']
+            else:
+                messages.append({"role": "system", "content": "STOP. The interrogation is over. Each detective must vote. Do they believe the confession is TRUE or FALSE? Output format:\nDETECTIVE NO. 1: [TRUE/FALSE]\nDETECTIVE NO. 2: [TRUE/FALSE]\n..."})
+                target_model = "google/gemini-3-flash-preview"
+
+            # start bg thread
+            t = threading.Thread(target=threaded_query, args=(target_model, messages, container))
+            t.start()
+            
+            # animation loop
+            spinner = itertools.cycle([".  ", ".. ", "..."])
+            while t.is_alive():
+                stdscr.move(h-2, 0)
+                stdscr.clrtoeol()
+                stdscr.addstr(h-2, 2, f"Thinking{next(spinner)}", curses.color_pair(3) | curses.A_BLINK)
+                stdscr.refresh()
+                time.sleep(0.3)
+            
+            t.join()
+            response = container['result']
+
+            # handle result
+            if questions_count < TOTAL_ROUNDS:
                 history.append((cop['name'], 1, response))
                 questions_count += 1
             else:
-                # verdict time
-                messages.append({"role": "system", "content": "STOP. The interrogation is over. Each detective must vote. Do they believe the confession is TRUE or FALSE? Output format:\nDETECTIVE NO. 1: [TRUE/FALSE]\nDETECTIVE NO. 2: [TRUE/FALSE]\n..."})
-                response = query_llm(messages)
                 history.append(("SYSTEM", 3, "Poll closed. Calculating results..."))
                 
-                # parsing votes
                 votes_true = response.upper().count("TRUE")
                 votes_false = response.upper().count("FALSE")
                 ai_consensus = True if votes_true >= votes_false else False
                 
-                # result screen
                 stdscr.clear()
                 center_print(stdscr, "--- VERDICT ---", y_offset=-5, attr=curses.A_BOLD)
                 center_print(stdscr, f"REALITY: {'TRUE' if is_truthful else 'FALSE'}", y_offset=-3)
@@ -200,18 +248,19 @@ def main(stdscr):
         curses.echo()
         curses.curs_set(1)
         try:
-            user_input = stdscr.getstr(h-2, 4, w-6).decode('utf-8')
+            raw_input = stdscr.getstr(h-2, 4, w-6).decode('utf-8')
         except curses.error:
             break 
         curses.noecho()
         curses.curs_set(0)
         
-        if user_input.strip() == "q": break
-        if not user_input.strip(): continue
+        if raw_input.strip() == "q": break
+        if not raw_input.strip(): continue
 
         messages.append({"role": "assistant", "content": history[-1][2]})
-        messages.append({"role": "user", "content": user_input})
-        history.append(("YOU", 2, user_input))
+        # expand for AI, keep raw for history
+        messages.append({"role": "user", "content": expand_hackclubisms(raw_input)})
+        history.append(("YOU", 2, raw_input))
 
 if __name__ == "__main__":
     curses.wrapper(main)

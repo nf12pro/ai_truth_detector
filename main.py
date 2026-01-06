@@ -3,10 +3,16 @@ import textwrap
 import threading
 import time
 import itertools
-import requests # Replaces OpenRouter
+import requests
 import json
+import os
+from dotenv import load_dotenv
+load_dotenv()
 
-API_KEY = "sk-hc-v1-5296baa0916e4ec38c93f257dae9c11ce1ffbe60de064dae9ef0184a479afb34"
+API_KEY = os.getenv("API_KEY")
+
+if not API_KEY:
+    raise ValueError("make .env or else you will be slimed")
 SERVER_URL = "https://ai.hackclub.com/proxy/v1"
 
 INVESTIGATORS = [

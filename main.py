@@ -127,7 +127,7 @@ def main(stdscr):
             except: return
         t.join()
         
-        ai_question = container['result']
+        ai_question = container['result'].replace('"', '').strip()
         history.append((cop['name'], 1, ai_question))
         messages.append({"role": "assistant", "content": ai_question})
         

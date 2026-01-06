@@ -3,18 +3,17 @@ import textwrap
 import threading
 import time
 import itertools
-from openrouter import OpenRouter
+import requests # Replaces OpenRouter
+import json
 
 API_KEY = "sk-hc-v1-5296baa0916e4ec38c93f257dae9c11ce1ffbe60de064dae9ef0184a479afb34"
 SERVER_URL = "https://ai.hackclub.com/proxy/v1"
 
-client = OpenRouter(api_key=API_KEY, server_url=SERVER_URL)
-
 INVESTIGATORS = [
-    {"name": "DETECTIVE NO. 1", "model": "google/gemini-2.0-flash-exp", "style": "good cop, empathetic"},
-    {"name": "DETECTIVE NO. 2", "model": "google/gemini-2.0-flash-exp", "style": "psychoanalyst"},
-    {"name": "DETECTIVE NO. 3", "model": "google/gemini-2.0-flash-exp", "style": "bad cop, aggressive"},
-    {"name": "DETECTIVE NO. 4", "model": "google/gemini-2.0-flash-exp", "style": "tired veteran"}
+    {"name": "DETECTIVE NO. 1", "model": "google/gemini-2.5-flash-lite-preview-09-2025", "style": "good cop, empathetic"},
+    {"name": "DETECTIVE NO. 2", "model": "google/gemini-3-flash-preview", "style": "psychoanalyst"},
+    {"name": "DETECTIVE NO. 3", "model": "xai/grok-4-1-fast", "style": "bad cop, aggressive"},
+    {"name": "DETECTIVE NO. 4", "model": "openai/gpt-5-mini", "style": "tired veteran"}
 ]
 
 QUESTIONS_PER_COP = 1 
@@ -26,16 +25,37 @@ HACK_CLUB_DICT = {
     "Kacper": "Kacper (cook)", "Aunt": "Aunt Augusta (victim)",
 }
 
-SYSTEM_PROMPT = "You are a detective. Ask ONE blunt, brief question to catch the suspect in a lie. No roleplay actions."
+SYSTEM_PROMPT = """
+You are a detective. Ask ONE blunt, brief question to catch the suspect in a lie.
+Other models will follow your lead to ask ACCURATE QUESTIONS. 
+DON'T MAKE UP STUFF. NO ROLEPLAY AT ALL.
+"""
 
 def expand_hackclubisms(text):
     for k, v in HACK_CLUB_DICT.items(): text = text.replace(k, v)
     return text
 
 def query_llm(model, messages):
+    headers = {
+        "Authorization": f"Bearer {API_KEY}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "model": model,
+        "messages": messages
+    }
+    
     try:
-        return client.chat.send(model=model, messages=messages, stream=False).choices[0].message.content
-    except Exception as e: return f"error {str(e)}"
+        response = requests.post(
+            f"{SERVER_URL}/chat/completions",
+            headers=headers,
+            json=data,
+            timeout=10 
+        )
+        response.raise_for_status() 
+        return response.json()['choices'][0]['message']['content']
+    except Exception as e: 
+        return f"error {str(e)}"
 
 def threaded_query(model, messages, container):
     container['result'] = query_llm(model, messages)
@@ -81,7 +101,7 @@ def main(stdscr):
     if not raw_confession.strip(): return
     curses.noecho(); curses.curs_set(0)
 
-    center_print(stdscr, "ARE YOU TRUTHFUL IN YOUR CONFESSION? (y/n)", y_offset=4, attr=curses.A_BOLD)
+    center_print(stdscr, "ARE YOU TRUTHFUL IN THIS CONFESSION? (y/n)", y_offset=4, attr=curses.A_BOLD)
     is_truthful = True
     while True:
         key = stdscr.getch()
@@ -163,7 +183,7 @@ def main(stdscr):
 
     stdscr.clear()
     center_print(stdscr, "INTERROGATION FINISHED", y_offset=-2, attr=curses.A_BOLD)
-    center_print(stdscr, "THE JUDGE BE JUDGING...", y_offset=0, attr=curses.color_pair(3))
+    center_print(stdscr, "THE JUDGE IS JUDGING...", y_offset=0, attr=curses.color_pair(3))
     stdscr.refresh()
 
     transcript = "TRANSCRIPT:\n" + "\n".join([f"{r}: {t}" for r, _, t in history])
@@ -173,7 +193,7 @@ def main(stdscr):
     ]
 
     container = {'result': None}
-    t = threading.Thread(target=threaded_query, args=("google/gemini-2.0-flash-exp", judge_messages, container))
+    t = threading.Thread(target=threaded_query, args=("xai/grok-4-1-fast", judge_messages, container))
     t.start(); t.join()
     
     ai_believed = "PASS" in container['result'].strip().upper()

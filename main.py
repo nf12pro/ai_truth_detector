@@ -43,7 +43,10 @@ TOTAL_ROUNDS = len(INVESTIGATORS) * QUESTIONS_PER_COP
 HACK_CLUB_DICT = {
     "HCB": "Hack Club Bank (non-profit finance system)",
     "Hack Club": "Hack Club (non-profit for coding clubs)",
-    "William Daniel": "William Daniel (suspected murderer)", 
+    "William Daniel": "William Daniel (suspected murderer)",
+    "Kacper": "Kacper (cook; suspected murderer)",
+    "Aunt": "Aunt Augusta (restaurant owner; murder victim)",
+    "William Daniel": "William Daniel (40yo ship security man, suspected murderer)",   
     "YSWS": "You Ship, We Ship (hackathon format)"
 }
 
@@ -102,10 +105,10 @@ def main(stdscr):
 
     # confession ui
     stdscr.clear()
-    prompt = "CONFESS YOUR CRIME"
+    prompt = "PLEASE CONFESS TO YOUR CRIME :"
     py, px = center_print(stdscr, prompt, y_offset=-2, attr=curses.A_BOLD | curses.A_UNDERLINE)
     
-    box_width = min(60, w - 4)
+    box_width = min(60, w - 4) 
     box_x = (w - box_width) // 2
     box_y = py + 2
     

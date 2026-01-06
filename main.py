@@ -120,7 +120,7 @@ def main(stdscr):
         stdscr.attron(curses.color_pair(4))
         raw_confession = stdscr.getstr(box_y, box_x + 1, box_width - 2).decode('utf-8')
         stdscr.attroff(curses.color_pair(4))
-    except curses.error:
+    except (curses.error, KeyboardInterrupt):
         return
 
     if not raw_confession.strip(): return
@@ -131,13 +131,18 @@ def main(stdscr):
     # truth selection
     center_print(stdscr, "WERE YOU TRUTHFUL IN YOUR CONFESSION? (y/n)", y_offset=4, attr=curses.A_BOLD)
     while True:
-        key = stdscr.getch()
-        if key == ord('y'):
-            is_truthful = True
-            break
-        elif key == ord('n'):
-            is_truthful = False
-            break
+        try:
+            key = stdscr.getch()
+            if key == ord('y'):
+                is_truthful = True
+                break
+            elif key == ord('n'):
+                is_truthful = False
+                break
+            elif key == 3: # ctrl+c catch
+                return
+        except KeyboardInterrupt:
+            return
 
     # interrogation loop
     messages = [
@@ -149,118 +154,124 @@ def main(stdscr):
     history = [("YOU", 2, raw_confession)]
     questions_count = 0
 
-    while True:
-        stdscr.clear()
-        
-        # calculate active cop
-        if questions_count < TOTAL_ROUNDS:
-            cop_idx = questions_count // QUESTIONS_PER_COP
-            cop = INVESTIGATORS[cop_idx]
-            round_q = (questions_count % QUESTIONS_PER_COP) + 1
-            label = f"{cop['name']} ({round_q}/{QUESTIONS_PER_COP})"
-            current_model = cop['model']
-        else:
-            label = "CONGREGATING VERDICTS"
-            current_model = "google/gemini-3-flash-preview"
-
-        header = f" INTERROGATION | {label} | {current_model.split('/')[-1]} "
-        stdscr.addstr(0, (w - len(header)) // 2, header, curses.A_REVERSE)
-        
-        current_y = h - 4
-        for role, color, text in reversed(history):
-            wrapper = textwrap.TextWrapper(width=w-4)
-            lines = wrapper.wrap(text)
-            if current_y - len(lines) < 1: break
-            for line in reversed(lines):
-                stdscr.addstr(current_y, 2, line)
-                current_y -= 1
-            stdscr.addstr(current_y, 2, f"{role}:", curses.color_pair(color) | curses.A_BOLD)
-            current_y -= 2
-
-        stdscr.refresh()
-
-        # ai turn
-        if len(history) % 2 != 0:
+    try:
+        while True:
+            stdscr.clear()
             
-            # prepare thread vars
-            container = {'result': None}
-            target_model = ""
-
+            # calculate active cop
             if questions_count < TOTAL_ROUNDS:
                 cop_idx = questions_count // QUESTIONS_PER_COP
                 cop = INVESTIGATORS[cop_idx]
-                inject = f"Current Speaker: {cop['name']}. Attitude: {cop['style']}. This is question {(questions_count % QUESTIONS_PER_COP) + 1} of 5 for you. Do not state your name."
-                messages.append({"role": "system", "content": inject})
-                target_model = cop['model']
+                round_q = (questions_count % QUESTIONS_PER_COP) + 1
+                label = f"{cop['name']} ({round_q}/{QUESTIONS_PER_COP})"
+                current_model = cop['model']
             else:
-                messages.append({"role": "system", "content": "STOP. The interrogation is over. Each detective must vote. Do they believe the confession is TRUE or FALSE? Output format:\nDETECTIVE NO. 1: [TRUE/FALSE]\nDETECTIVE NO. 2: [TRUE/FALSE]\n..."})
-                target_model = "google/gemini-3-flash-preview"
+                label = "CONGREGATING VERDICTS"
+                current_model = "google/gemini-3-flash-preview"
 
-            # start bg thread
-            t = threading.Thread(target=threaded_query, args=(target_model, messages, container))
-            t.start()
+            header = f" INTERROGATION | {label} | {current_model.split('/')[-1]} "
+            stdscr.addstr(0, (w - len(header)) // 2, header, curses.A_REVERSE)
             
-            # animation loop
-            spinner = itertools.cycle([".  ", ".. ", "..."])
-            while t.is_alive():
-                stdscr.move(h-2, 0)
-                stdscr.clrtoeol()
-                stdscr.addstr(h-2, 2, f"Thinking{next(spinner)}", curses.color_pair(3) | curses.A_BLINK)
-                stdscr.refresh()
-                time.sleep(0.3)
+            current_y = h - 4
+            for role, color, text in reversed(history):
+                wrapper = textwrap.TextWrapper(width=w-4)
+                lines = wrapper.wrap(text)
+                if current_y - len(lines) < 1: break
+                for line in reversed(lines):
+                    stdscr.addstr(current_y, 2, line)
+                    current_y -= 1
+                stdscr.addstr(current_y, 2, f"{role}:", curses.color_pair(color) | curses.A_BOLD)
+                current_y -= 2
+
+            stdscr.refresh()
+
+            # ai turn
+            if len(history) % 2 != 0:
+                
+                # prepare thread vars
+                container = {'result': None}
+                target_model = ""
+
+                if questions_count < TOTAL_ROUNDS:
+                    cop_idx = questions_count // QUESTIONS_PER_COP
+                    cop = INVESTIGATORS[cop_idx]
+                    inject = f"Current Speaker: {cop['name']}. Attitude: {cop['style']}. This is question {(questions_count % QUESTIONS_PER_COP) + 1} of 5 for you. Do not state your name."
+                    messages.append({"role": "system", "content": inject})
+                    target_model = cop['model']
+                else:
+                    messages.append({"role": "system", "content": "STOP. The interrogation is over. Each detective must vote. Do they believe the confession is TRUE or FALSE? Output format:\nDETECTIVE NO. 1: [TRUE/FALSE]\nDETECTIVE NO. 2: [TRUE/FALSE]\n..."})
+                    target_model = "google/gemini-3-flash-preview"
+
+                # start bg thread
+                t = threading.Thread(target=threaded_query, args=(target_model, messages, container))
+                t.start()
+                
+                # animation loop
+                spinner = itertools.cycle([".  ", ".. ", "..."])
+                while t.is_alive():
+                    try:
+                        stdscr.move(h-2, 0)
+                        stdscr.clrtoeol()
+                        stdscr.addstr(h-2, 2, f"Thinking{next(spinner)}", curses.color_pair(3) | curses.A_BLINK)
+                        stdscr.refresh()
+                        time.sleep(0.3)
+                    except KeyboardInterrupt:
+                        return # exit if interrupted during think
+                
+                t.join()
+                response = container['result']
+
+                # handle result
+                if questions_count < TOTAL_ROUNDS:
+                    history.append((cop['name'], 1, response))
+                    questions_count += 1
+                else:
+                    history.append(("SYSTEM", 3, "Poll closed. Calculating results..."))
+                    
+                    votes_true = response.upper().count("TRUE")
+                    votes_false = response.upper().count("FALSE")
+                    ai_consensus = True if votes_true >= votes_false else False
+                    
+                    stdscr.clear()
+                    center_print(stdscr, "--- VERDICT ---", y_offset=-5, attr=curses.A_BOLD)
+                    center_print(stdscr, f"REALITY: {'TRUE' if is_truthful else 'FALSE'}", y_offset=-3)
+                    center_print(stdscr, f"DETECTIVES VOTED: {votes_true} TRUE vs {votes_false} FALSE", y_offset=-2)
+                    
+                    stdscr.addstr(h//2, 2, response, curses.color_pair(3))
+                    
+                    won = (ai_consensus != is_truthful)
+                    msg = "YOU FOOLED THEM!" if won else "THEY FIGURED YOU OUT."
+                    color = curses.color_pair(5) if won else curses.color_pair(1)
+                    
+                    center_print(stdscr, msg, y_offset=4, attr=color | curses.A_BOLD | curses.A_BLINK)
+                    center_print(stdscr, "press any key to exit", y_offset=6)
+                    stdscr.getch()
+                    break
+                
+                continue
+
+            # user input
+            stdscr.hline(h-3, 0, curses.ACS_HLINE, w)
+            stdscr.addstr(h-2, 2, "> ")
             
-            t.join()
-            response = container['result']
-
-            # handle result
-            if questions_count < TOTAL_ROUNDS:
-                history.append((cop['name'], 1, response))
-                questions_count += 1
-            else:
-                history.append(("SYSTEM", 3, "Poll closed. Calculating results..."))
-                
-                votes_true = response.upper().count("TRUE")
-                votes_false = response.upper().count("FALSE")
-                ai_consensus = True if votes_true >= votes_false else False
-                
-                stdscr.clear()
-                center_print(stdscr, "--- VERDICT ---", y_offset=-5, attr=curses.A_BOLD)
-                center_print(stdscr, f"REALITY: {'TRUE' if is_truthful else 'FALSE'}", y_offset=-3)
-                center_print(stdscr, f"DETECTIVES VOTED: {votes_true} TRUE vs {votes_false} FALSE", y_offset=-2)
-                
-                stdscr.addstr(h//2, 2, response, curses.color_pair(3))
-                
-                won = (ai_consensus != is_truthful)
-                msg = "YOU FOOLED THEM!" if won else "THEY FIGURED YOU OUT."
-                color = curses.color_pair(5) if won else curses.color_pair(1)
-                
-                center_print(stdscr, msg, y_offset=4, attr=color | curses.A_BOLD | curses.A_BLINK)
-                center_print(stdscr, "press any key to exit", y_offset=6)
-                stdscr.getch()
-                break
+            curses.echo()
+            curses.curs_set(1)
+            try:
+                raw_input = stdscr.getstr(h-2, 4, w-6).decode('utf-8')
+            except (curses.error, KeyboardInterrupt):
+                break 
+            curses.noecho()
+            curses.curs_set(0)
             
-            continue
+            if raw_input.strip() == "q": break
+            if not raw_input.strip(): continue
 
-        # user input
-        stdscr.hline(h-3, 0, curses.ACS_HLINE, w)
-        stdscr.addstr(h-2, 2, "> ")
-        
-        curses.echo()
-        curses.curs_set(1)
-        try:
-            raw_input = stdscr.getstr(h-2, 4, w-6).decode('utf-8')
-        except curses.error:
-            break 
-        curses.noecho()
-        curses.curs_set(0)
-        
-        if raw_input.strip() == "q": break
-        if not raw_input.strip(): continue
-
-        messages.append({"role": "assistant", "content": history[-1][2]})
-        # expand for AI, keep raw for history
-        messages.append({"role": "user", "content": expand_hackclubisms(raw_input)})
-        history.append(("YOU", 2, raw_input))
+            messages.append({"role": "assistant", "content": history[-1][2]})
+            messages.append({"role": "user", "content": expand_hackclubisms(raw_input)})
+            history.append(("YOU", 2, raw_input))
+            
+    except KeyboardInterrupt:
+        return
 
 if __name__ == "__main__":
     curses.wrapper(main)

@@ -168,8 +168,8 @@ def main(stdscr):
 
     transcript = "TRANSCRIPT:\n" + "\n".join([f"{r}: {t}" for r, _, t in history])
     judge_messages = [
-        {"role": "system", "content": "You are a Judge. Analyze transcript. Did suspect trick detectives?"},
-        {"role": "user", "content": transcript + "\n\nOutput 'PASS' if suspect seems innocent/truthful. Output 'FAIL' if guilty/suspicious."}
+        {"role": "system", "content": "You are a Judge. Analyze transcript. Is the suspect truthful?"},
+        {"role": "user", "content": transcript + "\n\nOutput 'PASS' if suspect seems innocent. Output 'FAIL' if guilty."}
     ]
 
     container = {'result': None}
